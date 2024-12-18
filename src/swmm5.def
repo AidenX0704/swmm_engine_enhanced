@@ -21,3 +21,4 @@ EXPORTS
     swmm_step                     = _swmm_step@4
     swmm_stride                   = _swmm_stride@8
     swmm_writeLine                = _swmm_writeLine@4
+    get_coordinates_from_inp_and_csv                = _get_coordinates_from_inp_and_csv@8

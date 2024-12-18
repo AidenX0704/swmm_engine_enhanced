@@ -80,6 +80,8 @@
 #include <math.h>
 #include <time.h>
 #include <float.h>
+#include <ctype.h>
+
 
 //-----------------------------------------------------------------------------
 //  SWMM's header files
@@ -119,6 +121,14 @@ const double Qcf[6] =                  // Flow Conversion Factors:
     {1.0,     448.831, 0.64632,        // cfs, gpm, mgd --> cfs
      0.02832, 28.317,  2.4466 };       // cms, lps, mld --> cfs
 
+//-----------------------------------------------------------------------------
+// Define struct CsvNode
+//-----------------------------------------------------------------------------
+typedef struct {
+    char id[50];
+    double latitude;
+    double longitude;
+} CsvNode;
 
 //-----------------------------------------------------------------------------
 //  Shared variables
@@ -183,8 +193,167 @@ static void   getAbsolutePath(const char* fname, char* absPath, size_t size);
 static int  xfilter(int xc, char* module, double elapsedTime, long step);
 #endif
 
-//=============================================================================
+// 将经纬度数据写入 csv 文件
+void write_csv_file(const char* csv_filename, char** csv_nodes, CsvNode* node_data, int num_nodes, int csv_count)
+//
+//  Input:   csv_filename = csv filename
+//           csv_nodes = csv 文件中的节点NodeName
+//           node_data = inp 文件中的节点经纬度数据
+//           num_nodes = inp 文件中的节点数量
+//           csv_count = csv 文件中的节点数量
+//  Output:  无
+//  Purpose: 将经纬度数据写入 csv 文件
+//
+{
+    FILE* file = fopen(csv_filename, "w");  // 以追加模式打开
+    if (file == NULL) {
+        perror("Error opening csv file for writing");
+        return;
+    }
 
+    // 写入表头
+    fprintf(file, "TimeSeries,NodeName,Overflow,Latitude,Longitude\n");
+
+    // 查找并写入经纬度
+    for (int i = 0; i < csv_count; i++) {
+        int found = 0;
+        for (int j = 0; j < num_nodes; j++) {
+            if (strcmp(csv_nodes[i], node_data[j].id) == 0) {
+                fprintf(file, "N/A,%s,N/A,%.6f,%.6f\n", csv_nodes[i], node_data[j].latitude, node_data[j].longitude);
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            fprintf(file, "N/A,%s,N/A,NoData,NoData\n", csv_nodes[i]);
+        }
+    }
+
+    fclose(file);
+}
+
+// 读取 csv 文件中的 NodeName
+int read_csv_file(const char* csv_filename, char*** csv_nodes) {
+    FILE* file = fopen(csv_filename, "r");
+    if (file == NULL) {
+        perror("Error opening csv file");
+        return -1;
+    }
+
+    char line[256];
+    int csv_count = 0;
+
+    while (fgets(line, sizeof(line), file)) {
+        // 跳过第一行（表头）
+        if (csv_count == 0 && strstr(line, "NodeName")) {
+            continue;
+        }
+
+        // 假设每行一个NodeName
+        *csv_nodes = realloc(*csv_nodes, (csv_count + 1) * sizeof(char*));
+        if (*csv_nodes == NULL) {
+            perror("Memory allocation failed");
+            fclose(file);
+            return -1;
+        }
+
+        (*csv_nodes)[csv_count] = malloc(50 * sizeof(char));
+        if ((*csv_nodes)[csv_count] == NULL) {
+            perror("Memory allocation failed");
+            fclose(file);
+            return -1;
+        }
+
+        if (sscanf(line, "%49s", (*csv_nodes)[csv_count]) == 1) {
+            csv_count++;
+        }
+    }
+
+    fclose(file);
+    return csv_count;
+}
+
+
+// 读取 inp 文件中的节点和经纬度
+int read_inp_file(const char* inp_filename, CsvNode** nodes) {
+    FILE* file = fopen(inp_filename, "r");
+    if (file == NULL) {
+        perror("Error opening inp file");
+        return -1;
+    }
+
+    char line[256];
+    int node_count = 0;
+    int reading_coordinates = 0;
+
+    while (fgets(line, sizeof(line), file)) {
+        // 查找经纬度部分
+        if (strstr(line, "[COORDINATES]")) {
+            reading_coordinates = 1;
+            continue;
+        }
+
+        if (reading_coordinates) {
+            if (line[0] == '-' || line[0] == ';') {
+                continue;  // 跳过注释和分隔线
+            }
+
+            // 假设节点数据是：NodeID, X-Coord, Y-Coord
+            char id[50];
+            double latitude, longitude;
+            if (sscanf(line, "%49s%lf%lf", id, &latitude, &longitude) == 3) {
+                // 动态分配内存
+                *nodes = realloc(*nodes, (node_count + 1) * sizeof(Node));
+                if (*nodes == NULL) {
+                    perror("Memory allocation failed");
+                    fclose(file);
+                    return -1;
+                }
+                strcpy((*nodes)[node_count].id, id);
+                (*nodes)[node_count].latitude = latitude;
+                (*nodes)[node_count].longitude = longitude;
+                node_count++;
+            }
+        }
+    }
+
+    fclose(file);
+    return node_count;
+}
+
+//=============================================================================
+void DLLEXPORT get_coordinates_from_inp_and_csv(const char *inp, const char *csv) {
+    CsvNode* nodes = NULL;  // 动态分配节点数组
+    char** csv_nodes = NULL;  // 动态分配CSV节点数组
+    int node_count = 0;
+    int csv_count = 0;
+
+    // 读取 inp 文件中的节点经纬度数据
+    node_count = read_inp_file(inp, &nodes);
+    if (node_count == -1) {
+        printf("Error reading inp file\n");
+        return;
+    }
+
+    // 读取 csv 文件中的节点NodeName
+    csv_count = read_csv_file(csv, &csv_nodes);
+    if (csv_count == -1) {
+        printf("Error reading csv file\n");
+        return;
+    }
+
+    // 写入经纬度数据到 csv 文件
+    write_csv_file(csv, csv_nodes, nodes, node_count, csv_count);
+
+    // 释放动态分配的内存
+    free(nodes);
+    for (int i = 0; i < csv_count; i++) {
+        free(csv_nodes[i]);
+    }
+    free(csv_nodes);
+}
+
+//=============================================================================
 char *getCsvFilePath(const char *path) {
     size_t pathLen = strlen(path);
     // 先尝试从后往前找.的位置，判断是否有后缀
@@ -286,7 +455,7 @@ int DLLEXPORT  swmm_run(const char *f1, const char *f2, const char *f3)
 
 
     // Write the header row for the CSV
-    fprintf(timeseriesFile, "TimeSeries,NodeName,Overflow\n");
+    fprintf(timeseriesFile, "TimeSeries,NodeID,Overflow\n");
 
     // --- run the simulation if input data OK
     if ( !ErrorCode )

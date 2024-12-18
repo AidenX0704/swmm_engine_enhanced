@@ -149,6 +149,7 @@ double DLLEXPORT swmm_getSavedValue(int property, int index, int period);
 void   DLLEXPORT swmm_writeLine(const char *line);
 void   DLLEXPORT swmm_decodeDate(double date, int *year, int *month, int *day,
                  int *hour, int *minute, int *second, int *dayOfWeek);
+void   DLLEXPORT get_coordinates_from_inp_and_csv(const char *inp, const char *csv);
 
 #ifdef __cplusplus 
 }   // matches the linkage specification from above */ 
